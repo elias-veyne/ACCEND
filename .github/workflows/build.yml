@@ -4,11 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: "Publish a GitHub Release (only when signing secrets are set)"
-        type: boolean
-        default: true
 
 permissions:
   contents: write
@@ -34,6 +29,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
+      - name: Install Android SDK 35
+        run: yes | sdkmanager --licenses > /dev/null && sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
       - name: Set up Gradle (cache)
         uses: gradle/actions/setup-gradle@v4
 
@@ -44,7 +42,7 @@ jobs:
           if [ -z "$NAME" ]; then echo "APP_VERSION_NAME missing in gradle.properties" >&2; exit 1; fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Detect signing secrets
+      - name: Prepare release signing
         id: sign
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -54,43 +52,33 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "file=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
+            echo "::warning::Signing secrets are not configured - publishing an unsigned release APK."
             echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Keystore secrets missing - building an unsigned-for-release DEBUG APK and uploading it as an Actions artifact only."
           fi
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build signed release APK
-        if: steps.sign.outputs.signed == 'true'
+      - name: Build release APK
         env:
-          KEYSTORE_FILE: ${{ runner.temp }}/release.keystore
+          KEYSTORE_FILE: ${{ steps.sign.outputs.file }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: ./gradlew --no-daemon assembleRelease
 
-      - name: Build debug APK (fallback)
-        if: steps.sign.outputs.signed != 'true'
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
-        run: ./gradlew --no-daemon assembleDebug
-
       - name: Collect APK
         id: apk
         run: |
           mkdir -p dist
-          VER="${{ steps.ver.outputs.name }}"
-          if [ "${{ steps.sign.outputs.signed }}" = "true" ]; then
-            cp app/build/outputs/apk/release/app-release.apk "dist/ACCEND-v${VER}.apk"
-            echo "file=dist/ACCEND-v${VER}.apk" >> "$GITHUB_OUTPUT"
-          else
-            cp app/build/outputs/apk/debug/app-debug.apk "dist/ACCEND-v${VER}-debug.apk"
-            echo "file=dist/ACCEND-v${VER}-debug.apk" >> "$GITHUB_OUTPUT"
-          fi
+          APK=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          if [ -z "$APK" ]; then echo "No APK produced by assembleRelease" >&2; exit 1; fi
+          cp "$APK" "dist/ACCEND-v${{ steps.ver.outputs.name }}.apk"
+          echo "file=dist/ACCEND-v${{ steps.ver.outputs.name }}.apk" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
@@ -101,7 +89,6 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: steps.sign.outputs.signed == 'true' && (github.event_name == 'push' || inputs.publish_release == true)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ steps.ver.outputs.name }}
@@ -112,4 +99,4 @@ jobs:
           gh release create "$TAG" "$APK" \
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Automated build from commit ${GITHUB_SHA::7}. Install the APK on Android (allow installs from this source)."
+            --generate-notes
