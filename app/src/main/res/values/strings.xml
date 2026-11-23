@@ -1,3 +1,22 @@
 <resources>
-    <string name="app_name">ACCEND</string>
+    <string name="app_name">Accend</string>
+    <string name="brand_wordmark">ACCEND</string>
+    <string name="tab_home">Home</string>
+    <string name="tab_daily_work">Daily Work</string>
+    <string name="tab_analysis">Analysis</string>
+    <string name="tab_money">Money</string>
+    <string name="tab_settings">Settings</string>
+    <string name="notif_channel_daily_name">Daily reminder</string>
+    <string name="notif_channel_daily_desc">Reminds you of pending discipline protocols for today.</string>
+    <string name="notif_channel_miss_name">Missed days</string>
+    <string name="notif_channel_miss_desc">High-priority alert triggered after two consecutive missed days.</string>
+    <string name="default_two_day_miss_text">Two days gone. Get back in the arena if you want to improve, or sit back and call it a dream.</string>
+    <string name="onboarding_title">Welcome to ACCEND</string>
+    <string name="onboarding_subtitle">Build the person you\'ll be at 18.</string>
+    <string name="onboarding_name_label">Operator Name</string>
+    <string name="onboarding_name_error">Enter between 1 and 24 characters.</string>
+    <string name="onboarding_begin">BEGIN PROTOCOL</string>
+    <string name="home_execute_next">EXECUTE NEXT PROTOCOL</string>
+    <string name="daily_lock_in">LOCK IN PROTOCOL</string>
+    <string name="settings_save_protocol">SAVE DISCIPLINE PROTOCOL</string>
 </resources>

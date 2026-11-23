@@ -1,0 +1,6 @@
+{
+  "name": "Accend",
+  "description": "Local-first daily discipline operating system for physical training, cognitive fortitude, performance analytics, and financial runway.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
