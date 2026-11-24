@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "342272917488",
+    "project_id": "accend-4ec40",
+    "storage_bucket": "accend-4ec40.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:342272917488:android:0b75d9f3b82391fb19a735",
+        "android_client_info": {
+          "package_name": "com.example"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD1kTcUwiWH-xKgjpu3KArgMSKnkNyjzRA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
