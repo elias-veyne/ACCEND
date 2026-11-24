@@ -1,52 +1,83 @@
 package com.accend.app.ui.theme
 
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
-private val DarkColorScheme =
-  darkColorScheme(primary = Purple80, secondary = PurpleGrey80, tertiary = Pink80)
+data class AccendExtendedColors(
+    val bgBase: Color = AccendPalette.BgBase,
+    val surfaceElevated: Color = AccendPalette.SurfaceElevated,
+    val surfaceCard: Color = AccendPalette.SurfaceCard,
+    val surfaceInner: Color = AccendPalette.SurfaceInner,
+    val surfaceHighlight: Color = AccendPalette.SurfaceHighlight,
+    val borderSubtle: Color = AccendPalette.BorderSubtle,
+    val borderStrong: Color = AccendPalette.BorderStrong,
+    val textPrimary: Color = AccendPalette.TextPrimary,
+    val textSecondary: Color = AccendPalette.TextSecondary,
+    val textMuted: Color = AccendPalette.TextMuted,
+    val success: Color = AccendPalette.Success,
+    val successBg: Color = AccendPalette.SuccessBg,
+    val successBorder: Color = AccendPalette.SuccessBorder,
+    val warning: Color = AccendPalette.Warning,
+    val warningBg: Color = AccendPalette.WarningBg,
+    val danger: Color = AccendPalette.Danger,
+    val dangerDeep: Color = AccendPalette.DangerDeep,
+    val dangerBg: Color = AccendPalette.DangerBg,
+    val dangerBorder: Color = AccendPalette.DangerBorder
+)
 
-private val LightColorScheme =
-  lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40,
+val LocalAccendColors = staticCompositionLocalOf { AccendExtendedColors() }
 
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
-  )
+private val AccendDarkColorScheme = darkColorScheme(
+    primary = AccendPalette.AccentWhite,
+    onPrimary = AccendPalette.OnAccentWhite,
+    primaryContainer = AccendPalette.SurfaceHighlight,
+    onPrimaryContainer = AccendPalette.TextPrimary,
+    secondary = AccendPalette.AccentSilver,
+    onSecondary = AccendPalette.OnAccentWhite,
+    secondaryContainer = AccendPalette.SurfaceInner,
+    onSecondaryContainer = AccendPalette.TextPrimary,
+    tertiary = AccendPalette.Success,
+    onTertiary = AccendPalette.OnAccentWhite,
+    background = AccendPalette.BgBase,
+    onBackground = AccendPalette.TextPrimary,
+    surface = AccendPalette.SurfaceCard,
+    onSurface = AccendPalette.TextPrimary,
+    surfaceVariant = AccendPalette.SurfaceInner,
+    onSurfaceVariant = AccendPalette.TextSecondary,
+    outline = AccendPalette.BorderSubtle,
+    outlineVariant = AccendPalette.BorderStrong,
+    error = AccendPalette.Danger,
+    onError = AccendPalette.AccentWhite,
+    errorContainer = AccendPalette.DangerBg,
+    onErrorContainer = AccendPalette.Danger
+)
+
+private val AccendShapes = Shapes(
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(24.dp)
+)
 
 @Composable
-fun AccendTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  // Dynamic color is available on Android 12+
-  dynamicColor: Boolean = true,
-  content: @Composable () -> Unit,
-) {
-  val colorScheme =
-    when {
-      dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-        val context = LocalContext.current
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-      }
-
-      darkTheme -> DarkColorScheme
-      else -> LightColorScheme
+fun AccendTheme(content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalAccendColors provides AccendExtendedColors()) {
+        MaterialTheme(
+            colorScheme = AccendDarkColorScheme,
+            typography = AccendTypography,
+            shapes = AccendShapes,
+            content = content
+        )
     }
+}
 
-  MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+object AccendThemeTokens {
+    val colors: AccendExtendedColors
+        @Composable get() = LocalAccendColors.current
 }

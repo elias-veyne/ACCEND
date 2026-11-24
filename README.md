@@ -5,7 +5,7 @@
 <h1 align="center">ACCEND</h1>
 
 <p align="center">
-  <strong>A tactical daily discipline system for physical, mental, and financial growth.</strong>
+  <strong>A tactical daily discipline system for physical, mental, and financial growth — now cloud-synchronized.</strong>
 </p>
 
 <p align="center">
@@ -26,30 +26,61 @@ repeatable operating loop across three fronts:
 - **Mental** — build focus and consistency through small, deliberate daily actions.
 - **Financial** — grow your skill and runway with intention.
 
-Everything is designed around one idea: show up today, and the numbers take care of tomorrow.
+Every completed protocol awards EXP. Your level, total EXP and global rank are synchronized
+through Firebase, so a reinstall never costs you your history.
+
+## Features
+
+- **Google Sign-In** via Android Credential Manager + Firebase Auth.
+- **Cloud sync** — every Exercise / Nutrition / Mind / Money log is written locally with Room
+  and pushed to `users/{uid}/logs/{yyyy-MM-dd}` in Firestore. On login the last 30 days are
+  pulled back down and merged with local data.
+- **EXP & levels** — completing protocols grants EXP (500 EXP per level). The Home screen shows
+  your level, total EXP and progress to the next level.
+- **Global leaderboard** — live Firestore query, top 50 operators by EXP, with profile pictures
+  and podium treatment matching the tactical UI.
+- **Push notifications** — Firebase Cloud Messaging device tokens are saved to the user document;
+  `AccendMessagingService` displays incoming alerts and refreshes tokens.
+- **Adaptive launcher icon** generated from the ACCEND emblem.
+- All of the original local-first features: Daily Work checklists, Analysis charts, Money ledger,
+  Settings, timers, reminders and telemetry export/import.
 
 ## Tech stack
 
 | Layer | Technology |
 | --- | --- |
-| Language | [Kotlin](https://kotlinlang.org/) |
-| UI | [Jetpack Compose](https://developer.android.com/jetpack/compose) + Material 3 |
-| Local storage | [Room](https://developer.android.com/training/data-storage/room) |
+| Language | Kotlin |
+| UI | Jetpack Compose + Material 3 |
+| Local storage | Room |
+| Backend | Firebase Auth, Cloud Firestore, Cloud Messaging (Firebase BoM) |
+| Auth UI | Android Credential Manager + Google Identity |
+| Async | Kotlin Coroutines + Flow |
 | Build | Gradle (Kotlin DSL), Android Gradle Plugin |
 | Distribution | GitHub Actions → GitHub Releases |
+
+## Firebase configuration
+
+`app/google-services.json` is committed so builds are reproducible. It belongs to the
+`accend-4ec40` Firebase project and contains the `com.accend.app` Android client plus the web
+OAuth client used by Google Sign-In (`default_web_client_id`).
+
+When adding a new signing certificate (for example a new upload keystore), register its SHA-1
+fingerprint in Firebase Console → Project settings → Your apps → **com.accend.app**, otherwise
+Google Sign-In will be rejected by Google. Firestore security rules must allow authenticated
+users to read/write their own `users/{uid}` document and `users/{uid}/logs/**` subcollection.
 
 ## Download the APK
 
 The latest Android APK is published on the **[Releases](../../releases)** tab:
 
-1. Open **[Releases](../../releases)** and select the newest version (for example `v1.0.0`).
+1. Open **[Releases](../../releases)** and select the newest version (for example `v1.1.0`).
 2. Under **Assets**, download `ACCEND-v<version>.apk`.
 3. Transfer it to your Android device and open the file.
 4. When prompted, allow installation from this source (Android blocks unknown sources by
    default), then install and launch ACCEND.
 
 > Every push to `main` triggers the [build workflow](../../actions/workflows/build.yml). When it
-> completes successfully, the signed APK is attached to the release for that version.
+> completes successfully, the APK is attached to the release for that version.
 
 ## Build from source
 
@@ -66,10 +97,17 @@ The APK is written to `app/build/outputs/apk/release/`.
 ## Project structure
 
 ```
-app/src/main/java/com/accend/app/   Kotlin application sources
-app/src/main/res/                   Android resources
-.github/workflows/build.yml         Build + release automation
-gradle/libs.versions.toml           Centralised dependency versions
+app/src/main/java/com/accend/app/
+  data/cloud/      Firebase Auth, Firestore sync, leaderboard, FCM token
+  data/db/         Room database, entities and DAOs
+  data/repo/       Local repositories (push to Firestore after every write)
+  domain/          Scores, streaks, progression calculations
+  ui/              Compose screens (Home, Daily Work, Analysis, Money,
+                   Leaderboard, Settings, Sign-In)
+  work/            Local reminders + Firebase Messaging service
+app/google-services.json                Firebase configuration
+.github/workflows/build.yml             Build + release automation
+gradle/libs.versions.toml               Centralised dependency versions
 ```
 
 ---
