@@ -73,7 +73,7 @@ users to read/write their own `users/{uid}` document and `users/{uid}/logs/**` s
 
 The latest Android APK is published on the **[Releases](../../releases)** tab:
 
-1. Open **[Releases](../../releases)** and select the newest version (for example `v1.1.1`).
+1. Open **[Releases](../../releases)** and select the newest version (for example `v1.1.2`).
 2. Under **Assets**, download `ACCEND-v<version>.apk`.
 3. Transfer it to your Android device and open the file.
 4. When prompted, allow installation from this source (Android blocks unknown sources by

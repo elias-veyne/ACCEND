@@ -55,8 +55,8 @@ jobs:
             echo "file=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Signing secrets are not configured - publishing an unsigned release APK."
-            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Release signing secrets are missing. Refusing to publish an unsigned APK."
+            exit 1
           fi
 
       - name: Make gradlew executable
@@ -79,6 +79,25 @@ jobs:
           if [ -z "$APK" ]; then echo "No APK produced by assembleRelease" >&2; exit 1; fi
           cp "$APK" "dist/ACCEND-v${{ steps.ver.outputs.name }}.apk"
           echo "file=dist/ACCEND-v${{ steps.ver.outputs.name }}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Verify signed APK
+        env:
+          APK: ${{ steps.apk.outputs.file }}
+        run: |
+          SDK_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          echo "Verifying $APK"
+          "$SDK_TOOLS/apksigner" verify --verbose --min-sdk-version 24 "$APK" > apksigner.log 2>&1
+          cat apksigner.log
+          grep -q "Verified using v1 scheme" apksigner.log
+          grep -q "Verified using v2 scheme" apksigner.log
+          PACKAGE=$("$SDK_TOOLS/aapt" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          echo "Package: $PACKAGE"
+          if [ "$PACKAGE" != "com.accend.app" ]; then
+            echo "::error::Unexpected applicationId: $PACKAGE" >&2
+            exit 1
+          fi
+          VERSION_CODE=$("$SDK_TOOLS/aapt" dump badging "$APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
+          echo "versionCode: $VERSION_CODE (workflow run $GITHUB_RUN_NUMBER)"
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4

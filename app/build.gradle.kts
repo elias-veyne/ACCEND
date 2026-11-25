@@ -31,6 +31,11 @@ android {
         storePassword = System.getenv("KEYSTORE_PASSWORD")
         keyAlias = System.getenv("KEY_ALIAS")
         keyPassword = System.getenv("KEY_PASSWORD")
+        // Sign with both schemes: v2 for modern Android and v1 (JAR) for installers and
+        // older devices that still validate the JAR signature. v2-only APKs are sometimes
+        // rejected by OEM/sideload package installers as "package appears to be invalid".
+        isV1SigningEnabled = true
+        isV2SigningEnabled = true
       }
     }
   }
