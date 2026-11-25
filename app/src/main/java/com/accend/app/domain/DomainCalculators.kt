@@ -34,6 +34,9 @@ object MeditationLadder {
 }
 
 object VolumeCalculator {
+    /** Fixed radar scale: one full ring = 1,000 volume points. Never scale to the current max. */
+    const val RADAR_MAX_VOLUME = 1000.0
+
     fun unitWeight(unit: TargetUnit): Double = when (unit) {
         TargetUnit.REPS -> 1.0
         TargetUnit.SECONDS -> 0.5

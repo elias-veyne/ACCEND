@@ -153,7 +153,8 @@ class AccendViewModel(application: Application) : AndroidViewModel(application) 
                             container.userRepo.restoreCloudIdentity(
                                 profile.name, profile.photoUrl, profile.joinedDate
                             )
-                            container.dayEvaluator.catchUp()
+                            container.dayEvaluator.catchUp(_today.value)
+                            container.dayEvaluator.recomputeDay(_today.value, finalized = false)
                         }
                         true
                     } else false
@@ -187,6 +188,9 @@ class AccendViewModel(application: Application) : AndroidViewModel(application) 
             runCatching {
                 container.cloudRepo.ensureUserDocument()
                 container.cloudRepo.fullSync()
+                // Rebuild today's completion state from the freshly pulled Room rows.
+                container.dayEvaluator.catchUp(_today.value)
+                container.dayEvaluator.recomputeDay(_today.value, finalized = false)
             }
         }
     }
@@ -401,22 +405,22 @@ class AccendViewModel(application: Application) : AndroidViewModel(application) 
                 volByGroup[grp] = (volByGroup[grp] ?: 0.0) + log.volumeSnapshot
             }
         }
-        val maxVol9 = (VolumeCalculator.radarGroups.maxOfOrNull { volByGroup[it] ?: 0.0 } ?: 0.0).coerceAtLeast(1.0)
+        // Fixed scale keeps a single small workout from looking like a 100% spike.
+        val radarScale = VolumeCalculator.RADAR_MAX_VOLUME
         val radar9 = VolumeCalculator.radarGroups.map { g ->
             val v = volByGroup[g] ?: 0.0
-            RadarAxisPoint(g.shortLabel, (v / maxVol9).toFloat(), v)
+            RadarAxisPoint(g.shortLabel, (v / radarScale).toFloat().coerceIn(0f, 1f), v)
         }
         // Executive 4-cardinal radar (CHEST/PUSH, BACK/PULL, LEGS, CORE) matching screen__2
         val chestVol = (volByGroup[MuscleGroup.CHEST_PUSH] ?: 0.0) + (volByGroup[MuscleGroup.TRICEPS] ?: 0.0) + (volByGroup[MuscleGroup.SHOULDERS] ?: 0.0)
         val backVol = (volByGroup[MuscleGroup.BACK_PULL] ?: 0.0) + (volByGroup[MuscleGroup.BICEPS] ?: 0.0) + (volByGroup[MuscleGroup.NECK] ?: 0.0)
         val legsVol = volByGroup[MuscleGroup.LEGS] ?: 0.0
         val coreVol = (volByGroup[MuscleGroup.CORE] ?: 0.0) + (volByGroup[MuscleGroup.FOREARMS] ?: 0.0)
-        val maxVol4 = maxOf(chestVol, backVol, legsVol, coreVol, 1.0)
         val radar4 = listOf(
-            RadarAxisPoint("CHEST", (chestVol / maxVol4).toFloat(), chestVol),
-            RadarAxisPoint("BACK", (backVol / maxVol4).toFloat(), backVol),
-            RadarAxisPoint("LEGS", (legsVol / maxVol4).toFloat(), legsVol),
-            RadarAxisPoint("CORE", (coreVol / maxVol4).toFloat(), coreVol)
+            RadarAxisPoint("CHEST", (chestVol / radarScale).toFloat().coerceIn(0f, 1f), chestVol),
+            RadarAxisPoint("BACK", (backVol / radarScale).toFloat().coerceIn(0f, 1f), backVol),
+            RadarAxisPoint("LEGS", (legsVol / radarScale).toFloat().coerceIn(0f, 1f), legsVol),
+            RadarAxisPoint("CORE", (coreVol / radarScale).toFloat().coerceIn(0f, 1f), coreVol)
         )
         val totalVol30 = volByGroup.values.sum()
         val peakGroup = radar9.maxByOrNull { it.rawVolume }?.takeIf { it.rawVolume > 0.0 }?.label ?: "—"

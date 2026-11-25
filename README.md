@@ -36,7 +36,11 @@ through Firebase, so a reinstall never costs you your history.
   Auth profile details never overwrite your in-app identity.
 - **Cloud sync** — every Exercise / Nutrition / Mind / Money log is written locally with Room
   and pushed to `users/{uid}/logs/{yyyy-MM-dd}` in Firestore. On login the last 30 days are
-  pulled back down and merged with local data. Empty local snapshots never overwrite remote logs.
+  pulled back down and merged with local data (the workout program is seeded first so today's
+  checkboxes restore correctly). Empty local snapshots never overwrite remote logs.
+- **Idempotent EXP** — each grant is recorded in `users/{uid}/exp_events` with a deterministic
+  key, so re-ticking a restored task after reinstall cannot duplicate EXP.
+- **Radar charts** use a fixed 1,000-volume-point scale instead of relative scaling.
 - **Profile photos** are uploaded to Firebase Storage so the leaderboard shows your in-app avatar
   on every device.
 - **Delete Account** (Settings → Danger Zone) removes the Firestore user document and all log
@@ -80,7 +84,7 @@ users to read/write their own `users/{uid}` document and `users/{uid}/logs/**` s
 
 The latest Android APK is published on the **[Releases](../../releases)** tab:
 
-1. Open **[Releases](../../releases)** and select the newest version (for example `v1.1.4`).
+1. Open **[Releases](../../releases)** and select the newest version (for example `v1.1.5`).
 2. Under **Assets**, download `ACCEND-v<version>.apk`.
 3. Transfer it to your Android device and open the file.
 4. When prompted, allow installation from this source (Android blocks unknown sources by

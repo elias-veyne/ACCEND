@@ -404,7 +404,7 @@ private fun RadarCardinalLabel(axis: RadarAxisPoint, modifier: Modifier = Modifi
             color = AccendPalette.TextMuted
         )
         Text(
-            text = "${(axis.normalized * 100).roundToInt()}%",
+            text = "${axis.rawVolume.toInt()} PTS",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = AccendPalette.AccentWhite
         )

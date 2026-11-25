@@ -26,6 +26,7 @@ import com.accend.app.domain.VolumeCalculator
 import com.accend.app.util.AccendDate
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import java.util.UUID
 import kotlin.math.max
 
 class SeedRepository(private val db: AccendDatabase) {
@@ -154,7 +155,7 @@ class DisciplineRepository(
         )
         evaluator.recomputeDay(date, finalized = date < AccendDate.today())
         cloudRepo.pushDayIfSignedIn(iso)
-        if (newDone) cloudRepo.awardExp(25)
+        if (newDone) cloudRepo.awardExp(25, "ex-$iso-${exercise.id}")
     }
 
     suspend fun updateNutrition(date: AccendDate, transform: (NutritionLogEntity) -> NutritionLogEntity) {
@@ -163,7 +164,7 @@ class DisciplineRepository(
         db.nutritionDao().upsert(transform(current))
         evaluator.recomputeDay(date, finalized = date < AccendDate.today())
         cloudRepo.pushDayIfSignedIn(iso)
-        cloudRepo.awardExp(5)
+        cloudRepo.awardExp(5, "nut-$iso")
     }
 
     suspend fun saveScreenTime(date: AccendDate, minutes: Int) {
@@ -204,7 +205,7 @@ class DisciplineRepository(
         )
         evaluator.recomputeDay(date, finalized = date < AccendDate.today())
         cloudRepo.pushDayIfSignedIn(date.toIsoString())
-        cloudRepo.awardExp(40)
+        cloudRepo.awardExp(40, "med-${System.currentTimeMillis()}")
     }
 
     suspend fun logDeepWork(date: AccendDate, minutes: Int, completed: Boolean) {
@@ -218,7 +219,7 @@ class DisciplineRepository(
         )
         evaluator.recomputeDay(date, finalized = date < AccendDate.today())
         cloudRepo.pushDayIfSignedIn(date.toIsoString())
-        if (completed) cloudRepo.awardExp(50)
+        if (completed) cloudRepo.awardExp(50, "deep-${System.currentTimeMillis()}")
     }
 
     suspend fun levelUpExercise(exerciseId: Long, today: AccendDate = AccendDate.today()) {
@@ -333,7 +334,7 @@ class MoneyRepository(
     suspend fun insertTransaction(tx: MoneyTransactionEntity): Long {
         val id = db.moneyDao().insert(tx)
         cloudRepo.pushDayIfSignedIn(tx.date)
-        cloudRepo.awardExp(10)
+        cloudRepo.awardExp(10, "tx-${UUID.randomUUID()}")
         return id
     }
 
@@ -383,7 +384,7 @@ class MoneyRepository(
             )
         )
         cloudRepo.pushDayIfSignedIn(date.toIsoString())
-        cloudRepo.awardExp(20)
+        cloudRepo.awardExp(20, "skill-${UUID.randomUUID()}")
     }
 
     suspend fun deleteSkillLog(log: SkillLogEntity) = db.skillDao().delete(log)

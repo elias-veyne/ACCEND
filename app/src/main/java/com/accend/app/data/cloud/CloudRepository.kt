@@ -1,6 +1,7 @@
 package com.accend.app.data.cloud
 
 import android.net.Uri
+import android.util.Log
 import com.accend.app.data.db.AccendDatabase
 import com.accend.app.data.db.DeepWorkLogEntity
 import com.accend.app.data.db.ExerciseLogEntity
@@ -9,6 +10,7 @@ import com.accend.app.data.db.MoneyTransactionEntity
 import com.accend.app.data.db.NutritionLogEntity
 import com.accend.app.data.db.ReadingLogEntity
 import com.accend.app.data.db.ScreenTimeLogEntity
+import com.accend.app.data.repo.SeedRepository
 import com.accend.app.util.AccendDate
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -56,7 +58,14 @@ data class RemoteProfile(
  *   users/{uid}                     -> name, displayName, photoUrl, exp, fcmToken, joinedDate
  *   users/{uid}/logs/{yyyy-MM-dd}   -> exercise / nutrition / mind / money snapshots
  */
-class CloudRepository(private val db: AccendDatabase) {
+class CloudRepository(
+    private val db: AccendDatabase,
+    private val seedRepo: SeedRepository
+) {
+
+    companion object {
+        private const val TAG = "CloudRepository"
+    }
 
     private val auth = FirebaseAuth.getInstance()
     private val firestore = FirebaseFirestore.getInstance()
@@ -159,7 +168,13 @@ class CloudRepository(private val db: AccendDatabase) {
             val imageRef = FirebaseStorage.getInstance().reference.child("profile_images/$uid.jpg")
             runCatching {
                 imageRef.putFile(newPhotoUri).await()
-                update["photoUrl"] = imageRef.downloadUrl.await().toString()
+                val url = imageRef.downloadUrl.await().toString()
+                update["photoUrl"] = url
+                Log.d(TAG, "Avatar uploaded: $url")
+            }.onFailure { error ->
+                // Keep the current Auth photo when Storage rejects the upload.
+                Log.e(TAG, "Avatar upload failed; keeping Auth photo", error)
+                auth.currentUser?.photoUrl?.let { update["photoUrl"] = it.toString() }
             }
         }
         update["updatedAt"] = FieldValue.serverTimestamp()
@@ -173,12 +188,14 @@ class CloudRepository(private val db: AccendDatabase) {
             user.reauthenticate(GoogleAuthProvider.getCredential(idToken, null)).await()
         }
         val uid = user.uid
-        while (true) {
-            val docs = users.document(uid).collection("logs").limit(400).get().await().documents
-            if (docs.isEmpty()) break
-            val batch = firestore.batch()
-            docs.forEach { batch.delete(it.reference) }
-            batch.commit().await()
+        listOf("logs", "exp_events").forEach { name ->
+            while (true) {
+                val docs = users.document(uid).collection(name).limit(400).get().await().documents
+                if (docs.isEmpty()) break
+                val batch = firestore.batch()
+                docs.forEach { batch.delete(it.reference) }
+                batch.commit().await()
+            }
         }
         users.document(uid).delete().await()
         runCatching {
@@ -187,18 +204,31 @@ class CloudRepository(private val db: AccendDatabase) {
         user.delete().await()
     }
 
-    suspend fun awardExp(amount: Int) {
+    /**
+     * Idempotent EXP grant: the event document key is deterministic for repeatable tasks, so
+     * re-ticking a restored checkbox after reinstall cannot award EXP twice.
+     */
+    suspend fun awardExp(amount: Int, eventKey: String) {
         val uid = currentUid ?: return
-        if (amount <= 0) return
+        if (amount <= 0 || eventKey.isBlank()) return
         runCatching {
             firestore.runTransaction { tx ->
+                val eventRef = users.document(uid).collection("exp_events").document(eventKey)
+                if (tx.get(eventRef).exists()) return@runTransaction null
                 val ref = users.document(uid)
                 val snap = tx.get(ref)
                 val current = (snap.get("exp") as? Number)?.toLong() ?: LevelCalculator.INITIAL_EXP
-                tx.update(ref, mapOf("exp" to current + amount, "updatedAt" to FieldValue.serverTimestamp()))
+                tx.set(
+                    eventRef,
+                    mapOf("amount" to amount, "createdAt" to FieldValue.serverTimestamp())
+                )
+                tx.update(
+                    ref,
+                    mapOf("exp" to current + amount, "updatedAt" to FieldValue.serverTimestamp())
+                )
                 null
             }.await()
-        }
+        }.onFailure { Log.e(TAG, "Failed to award EXP for $eventKey", it) }
     }
 
     fun observeMyExp(): Flow<Long> = callbackFlow {
@@ -238,6 +268,8 @@ class CloudRepository(private val db: AccendDatabase) {
     /** Pull remote logs down first, then push the merged local state back up. */
     suspend fun fullSync() {
         val uid = currentUid ?: return
+        // Seed first: remote exercise logs are keyed by exercise name and need local exercise IDs.
+        seedRepo.seedIfEmpty()
         pullAll(uid)
         val today = AccendDate.today().toIsoString()
         pushDay(uid, today)

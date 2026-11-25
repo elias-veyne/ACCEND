@@ -24,9 +24,10 @@ class AppContainer(context: Context) {
     private val appContext = context.applicationContext
 
     val database: AccendDatabase by lazy { AccendDatabase.create(appContext) }
-    val cloudRepo: CloudRepository by lazy { CloudRepository(database) }
-    val prefsRepo: PrefsRepository by lazy { PrefsRepository(appContext) }
     val seedRepo: SeedRepository by lazy { SeedRepository(database) }
+    // The cloud repo seeds the local program before pulling logs so exercise IDs can be mapped.
+    val cloudRepo: CloudRepository by lazy { CloudRepository(database, seedRepo) }
+    val prefsRepo: PrefsRepository by lazy { PrefsRepository(appContext) }
     val dayEvaluator: DayEvaluator by lazy { DayEvaluator(database, prefsRepo) }
     val userRepo: UserRepository by lazy { UserRepository(database, prefsRepo, seedRepo) }
     val disciplineRepo: DisciplineRepository by lazy { DisciplineRepository(database, dayEvaluator, cloudRepo) }
