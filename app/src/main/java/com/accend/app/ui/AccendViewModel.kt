@@ -50,12 +50,16 @@ import com.accend.app.util.Format
 import com.accend.app.util.HapticLevel
 import com.accend.app.util.ImageUtils
 import com.accend.app.work.NotificationScheduler
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -92,6 +96,10 @@ class AccendViewModel(application: Application) : AndroidViewModel(application) 
     val pendingDeleteTx: StateFlow<Pair<MoneyTransactionEntity, Int>?> = _pendingDeleteTx
 
     init {
+        // Auth session can restore after the UI is created — start cloud sync once it exists.
+        viewModelScope.launch {
+            container.cloudRepo.authState().filterNotNull().collect { syncCloudOnce() }
+        }
         // Midnight rollover ticker (re-checks every 30s)
         viewModelScope.launch {
             while (true) {
@@ -160,8 +168,20 @@ class AccendViewModel(application: Application) : AndroidViewModel(application) 
                     } else false
                     onSuccess(restored)
                 }
-                .onFailure { onError(it.message ?: "Google sign-in failed.") }
+                .onFailure { onError(friendlyAuthError(it)) }
         }
+    }
+
+    private fun friendlyAuthError(error: Throwable): String = when {
+        error is FirebaseFirestoreException && when (error.code) {
+            FirebaseFirestoreException.Code.PERMISSION_DENIED,
+            FirebaseFirestoreException.Code.UNAVAILABLE,
+            FirebaseFirestoreException.Code.DEADLINE_EXCEEDED,
+            FirebaseFirestoreException.Code.INTERNAL -> true
+            else -> false
+        } -> "Network error. Please try again."
+        error is FirebaseAuthException -> error.message ?: "Sign-in failed. Please try again."
+        else -> error.message ?: "Network error. Please try again."
     }
 
     suspend fun restoreIdentityIfSignedIn(): Boolean {

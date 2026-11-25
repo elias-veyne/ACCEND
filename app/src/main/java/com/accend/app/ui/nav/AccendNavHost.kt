@@ -174,7 +174,11 @@ fun AccendNavHost(
                         onFinished = {
                             scope.launch {
                                 val snap = withContext(Dispatchers.IO) { viewModel.container.prefsRepo.getSnapshot() }
-                                if (!viewModel.isSignedIn()) {
+                                // Auth state may still be restoring on a cold start.
+                                val signedInUser = withContext(Dispatchers.IO) {
+                                    viewModel.container.cloudRepo.awaitAuthUser()
+                                }
+                                if (signedInUser == null) {
                                     navController.navigate(Routes.SIGN_IN) {
                                         popUpTo(Routes.SPLASH) { inclusive = true }
                                     }
@@ -184,10 +188,18 @@ fun AccendNavHost(
                                 if (!snap.onboarded) {
                                     // Returning user with wiped local data: restore identity from
                                     // Firestore and skip onboarding instead of overwriting it.
-                                    val restored = withContext(Dispatchers.IO) {
-                                        viewModel.restoreIdentityIfSignedIn()
+                                    val result = withContext(Dispatchers.IO) {
+                                        runCatching { viewModel.restoreIdentityIfSignedIn() }
                                     }
-                                    if (restored) {
+                                    if (result.isFailure) {
+                                        // Read failed (network/permissions) — never assume new user.
+                                        showMessage("Network error. Please try again.")
+                                        navController.navigate(Routes.HOME) {
+                                            popUpTo(Routes.SPLASH) { inclusive = true }
+                                        }
+                                        return@launch
+                                    }
+                                    if (result.getOrDefault(false)) {
                                         navController.navigate(Routes.HOME) {
                                             popUpTo(Routes.SPLASH) { inclusive = true }
                                         }

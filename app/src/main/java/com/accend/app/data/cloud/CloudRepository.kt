@@ -15,15 +15,23 @@ import com.accend.app.util.AccendDate
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 
 /** EXP thresholds used across the app, the leaderboard and the Home HUD. */
 object LevelCalculator {
@@ -85,22 +93,33 @@ class CloudRepository(
         awaitClose { auth.removeAuthStateListener(listener) }
     }
 
-    /** Returns the stored Firestore profile for returning users, or null for brand-new users. */
+    /** Waits for Firebase Auth to finish restoring a persisted session after a cold start. */
+    suspend fun awaitAuthUser(): FirebaseUser? = try {
+        withTimeout(4_000L) { authState().filterNotNull().first() }
+    } catch (_: TimeoutCancellationException) {
+        null
+    }
+
+    /**
+     * Returns the stored Firestore profile for returning users, or null only when the read
+     * succeeds and the document genuinely does not exist. Firestore/network failures are thrown
+     * so the UI keeps the user on the sign-in screen instead of assuming they are new.
+     */
     suspend fun signInWithGoogle(idToken: String): RemoteProfile? {
         val credential = GoogleAuthProvider.getCredential(idToken, null)
         auth.signInWithCredential(credential).await()
-        val user = auth.currentUser ?: return null
-        val snapshot = runCatching { users.document(user.uid).get().await() }.getOrNull()
-        val existed = snapshot?.exists() == true
-        ensureUserDocument()
+        // Auth is fully settled after await(); use the listener to confirm the session.
+        val user = awaitAuthUser() ?: auth.currentUser ?: return null
+        val snapshot = users.document(user.uid).get().await()
+        val existed = snapshot.exists()
+        runCatching { ensureUserDocument(snapshot) }
         fullSync()
-        return if (existed && snapshot != null) profileFrom(snapshot.data, user.displayName) else null
+        return if (existed) profileFrom(snapshot.data, user.displayName) else null
     }
 
     suspend fun fetchRemoteProfile(): RemoteProfile? {
-        val user = auth.currentUser ?: return null
-        val snapshot = runCatching { users.document(user.uid).get().await() }.getOrNull()
-            ?: return null
+        val user = awaitAuthUser() ?: auth.currentUser ?: return null
+        val snapshot = users.document(user.uid).get().await()
         if (!snapshot.exists()) return null
         return profileFrom(snapshot.data, user.displayName)
     }
@@ -120,11 +139,11 @@ class CloudRepository(
     }
 
     /** Creates the user document on first login and keeps profile/token fresh afterwards. */
-    suspend fun ensureUserDocument() {
+    suspend fun ensureUserDocument(knownSnapshot: DocumentSnapshot? = null) {
         val user = auth.currentUser ?: return
         val ref = users.document(user.uid)
         val token = runCatching { FirebaseMessaging.getInstance().token.await() }.getOrNull()
-        val snapshot = runCatching { ref.get().await() }.getOrNull()
+        val snapshot = knownSnapshot ?: runCatching { ref.get().await() }.getOrNull()
 
         if (snapshot == null || !snapshot.exists()) {
             // Brand-new user: seed from Auth once. Afterwards Firestore is authoritative —
@@ -231,38 +250,76 @@ class CloudRepository(
         }.onFailure { Log.e(TAG, "Failed to award EXP for $eventKey", it) }
     }
 
-    fun observeMyExp(): Flow<Long> = callbackFlow {
-        val uid = currentUid
-        if (uid == null) {
-            trySend(0L)
-            awaitClose { }
-            return@callbackFlow
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observeMyExp(): Flow<Long> = authState().flatMapLatest { user ->
+        if (user == null) {
+            flowOf(0L)
+        } else {
+            callbackFlow {
+                val registration = users.document(user.uid).addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e(TAG, "Could not read EXP", error)
+                    }
+                    val raw = snapshot?.get("exp") ?: snapshot?.get("totalExp")
+                    trySend((raw as? Number)?.toLong() ?: LevelCalculator.INITIAL_EXP)
+                }
+                awaitClose { registration.remove() }
+            }
         }
-        val registration = users.document(uid).addSnapshotListener { snapshot, _ ->
-            trySend((snapshot?.get("exp") as? Number)?.toLong() ?: LevelCalculator.INITIAL_EXP)
-        }
-        awaitClose { registration.remove() }
     }
 
     fun observeLeaderboard(): Flow<List<LeaderboardEntry>> = callbackFlow {
-        val registration = users
-            .orderBy("exp", Query.Direction.DESCENDING)
-            .limit(50)
-            .addSnapshotListener { snapshot, _ ->
-                val entries = snapshot?.documents.orEmpty().mapIndexed { index, doc ->
-                    LeaderboardEntry(
-                        uid = doc.id,
-                        name = doc.getString("name")?.takeIf { it.isNotBlank() }
-                            ?: doc.getString("displayName")?.takeIf { it.isNotBlank() }
-                            ?: "OPERATOR",
-                        photoUrl = doc.getString("photoUrl")?.takeIf { it.isNotBlank() },
-                        exp = (doc.get("exp") as? Number)?.toLong() ?: 0L,
-                        rank = index + 1
-                    )
+        fun mapEntry(doc: DocumentSnapshot, index: Int): LeaderboardEntry {
+            fun field(key: String) = doc.getString(key)?.takeIf { it.isNotBlank() }
+            val rawExp = doc.get("exp") ?: doc.get("totalExp")
+            return LeaderboardEntry(
+                uid = doc.id,
+                name = field("name") ?: field("displayName") ?: "OPERATOR",
+                photoUrl = field("photoUrl"),
+                exp = (rawExp as? Number)?.toLong() ?: 0L,
+                rank = index + 1
+            )
+        }
+
+        var registration: ListenerRegistration? = null
+
+        // Some projects have docs without an `exp` field (orderBy skips those) or lack the
+        // composite/index permissions. Keep the ordered query, but fall back to an unordered
+        // read sorted on the client when it returns nothing or errors.
+        fun startUnorderedFallback() {
+            registration?.remove()
+            Log.w(TAG, "Ordered leaderboard query unavailable; using unordered fallback")
+            registration = users.limit(50).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "Leaderboard fallback query failed", error)
+                    trySend(emptyList())
+                    return@addSnapshotListener
                 }
+                val entries = snapshot?.documents.orEmpty()
+                    .mapIndexed { index, doc -> mapEntry(doc, index) }
+                    .sortedByDescending { it.exp }
+                    .take(50)
+                    .mapIndexed { index, entry -> entry.copy(rank = index + 1) }
                 trySend(entries)
             }
-        awaitClose { registration.remove() }
+        }
+
+        registration = users
+            .orderBy("exp", Query.Direction.DESCENDING)
+            .limit(50)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "Leaderboard ordered query failed", error)
+                    startUnorderedFallback()
+                    return@addSnapshotListener
+                }
+                if (snapshot == null || snapshot.isEmpty) {
+                    startUnorderedFallback()
+                    return@addSnapshotListener
+                }
+                trySend(snapshot.documents.mapIndexed { index, doc -> mapEntry(doc, index) })
+            }
+        awaitClose { registration?.remove() }
     }
 
     /** Pull remote logs down first, then push the merged local state back up. */
@@ -270,11 +327,16 @@ class CloudRepository(
         val uid = currentUid ?: return
         // Seed first: remote exercise logs are keyed by exercise name and need local exercise IDs.
         seedRepo.seedIfEmpty()
-        pullAll(uid)
-        val today = AccendDate.today().toIsoString()
-        pushDay(uid, today)
+        // Log sync is best-effort: a missing logs permission must not block sign-in.
+        runCatching { pullAll(uid) }.onFailure { Log.e(TAG, "Log pull failed", it) }
+        val today = AccendDate.today()
+        val todayIso = today.toIsoString()
+        runCatching { pushDay(uid, todayIso) }.onFailure { Log.e(TAG, "Log push failed", it) }
         // Also publish the last 30 days so a fresh install can recover history immediately.
-        for (i in 1 until 30) pushDay(uid, AccendDate.today().minusDays(i).toIsoString())
+        for (i in 1 until 30) {
+            runCatching { pushDay(uid, today.minusDays(i).toIsoString()) }
+                .onFailure { Log.e(TAG, "History push failed for day -$i", it) }
+        }
     }
 
     suspend fun pushDayIfSignedIn(date: String) {
