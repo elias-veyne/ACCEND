@@ -3,6 +3,7 @@ package com.accend.app.ui
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import androidx.work.WorkManager
 import androidx.lifecycle.viewModelScope
 import com.accend.app.AccendApp
 import com.accend.app.data.cloud.LeaderboardEntry
@@ -141,15 +142,34 @@ class AccendViewModel(application: Application) : AndroidViewModel(application) 
 
     fun isSignedIn(): Boolean = container.cloudRepo.isSignedIn
 
-    fun signIn(idToken: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    /** onSuccess receives true when an existing Firestore identity was restored locally. */
+    fun signIn(idToken: String, onSuccess: (Boolean) -> Unit, onError: (String) -> Unit) {
         viewModelScope.launch {
             runCatching { container.cloudRepo.signInWithGoogle(idToken) }
-                .onSuccess {
+                .onSuccess { profile ->
                     cloudSynced = true
-                    onSuccess()
+                    val restored = if (profile != null) {
+                        withContext(Dispatchers.IO) {
+                            container.userRepo.restoreCloudIdentity(
+                                profile.name, profile.photoUrl, profile.joinedDate
+                            )
+                            container.dayEvaluator.catchUp()
+                        }
+                        true
+                    } else false
+                    onSuccess(restored)
                 }
                 .onFailure { onError(it.message ?: "Google sign-in failed.") }
         }
+    }
+
+    suspend fun restoreIdentityIfSignedIn(): Boolean {
+        val profile = container.cloudRepo.fetchRemoteProfile() ?: return false
+        withContext(Dispatchers.IO) {
+            container.userRepo.restoreCloudIdentity(profile.name, profile.photoUrl, profile.joinedDate)
+            container.dayEvaluator.catchUp()
+        }
+        return true
     }
 
     fun signOut() {
@@ -777,6 +797,23 @@ class AccendViewModel(application: Application) : AndroidViewModel(application) 
                 else -> current.pfpUri
             }
             container.userRepo.updateProfile(name, finalUri)
+            container.cloudRepo.updateProfile(name, newPhotoUri, removePhoto)
+        }
+    }
+
+    fun deleteAccount(idToken: String, onDone: (String?) -> Unit) {
+        viewModelScope.launch {
+            val failure = runCatching {
+                withContext(Dispatchers.IO) {
+                    container.cloudRepo.deleteAccount(idToken)
+                    container.database.clearAllTables()
+                    container.prefsRepo.clearAll()
+                    ImageUtils.deleteProfilePhotos(getApplication())
+                    WorkManager.getInstance(getApplication()).cancelAllWork()
+                }
+            }.exceptionOrNull()
+            cloudSynced = false
+            onDone(failure?.message)
         }
     }
 

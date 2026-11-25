@@ -96,6 +96,23 @@ class UserRepository(
         val current = db.userDao().getUser() ?: return
         db.userDao().upsert(current.copy(name = name.trim(), pfpUri = pfpUri))
     }
+
+    /** Restores the authoritative Firestore identity into the local DB after a reinstall. */
+    suspend fun restoreCloudIdentity(name: String, pfpUri: String?, joinedDate: String?) {
+        val iso = joinedDate?.takeIf { it.isNotBlank() } ?: AccendDate.today().toIsoString()
+        val current = db.userDao().getUser()
+        db.userDao().upsert(
+            UserEntity(
+                id = 1,
+                name = name.trim().ifBlank { "Operator" },
+                pfpUri = pfpUri,
+                joinedDate = current?.joinedDate?.takeIf { it.isNotBlank() } ?: iso,
+                onboarded = true
+            )
+        )
+        if (db.exerciseDao().count() == 0) seedRepo.insertDefaultExercises(iso)
+        prefsRepo.setOnboarded(true)
+    }
 }
 
 class DisciplineRepository(

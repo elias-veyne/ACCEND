@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Lock
@@ -56,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +73,7 @@ import com.accend.app.AppConfig
 import com.accend.app.data.prefs.AccendPrefs
 import com.accend.app.ui.components.AccendCard
 import com.accend.app.ui.components.AccendInnerBox
+import com.accend.app.ui.components.ConfirmActionDialog
 import com.accend.app.ui.components.NumberStepper
 import com.accend.app.ui.components.PfpAvatar
 import com.accend.app.ui.components.PrimaryWhiteButton
@@ -81,10 +84,12 @@ import com.accend.app.ui.components.TacticalSwitch
 import com.accend.app.ui.theme.AccendPalette
 import com.accend.app.ui.theme.AccendThemeTokens
 import com.accend.app.ui.theme.MonoFontFamily
+import com.accend.app.ui.signin.GoogleSignInHelper
 import com.accend.app.util.Format
 import com.accend.app.util.HapticLevel
 import com.accend.app.util.Haptics
 import com.accend.app.work.Notifications
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 data class SettingsUiState(
@@ -121,17 +126,21 @@ fun SettingsScreen(
     onOpenBodyLogs: () -> Unit,
     onOpenDataScreen: () -> Unit,
     onSaveProtocolConfirmed: () -> Unit,
+    onDeleteAccount: (String, (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val c = AccendThemeTokens.colors
     val context = LocalContext.current
     val view = LocalView.current
+    val scope = rememberCoroutineScope()
     val notifAllowed = remember { Notifications.hasPermission(context) }
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var showMissTextDialog by remember { mutableStateOf(false) }
     var showReminderTimeDialog by remember { mutableStateOf(false) }
     var showTargetsEditDialog by remember { mutableStateOf(false) }
+    var showDeleteAccountDialog by remember { mutableStateOf(false) }
+    var deleteAccountError by remember { mutableStateOf<String?>(null) }
 
     var screenSliderMin by remember(state.prefs.screenTargetMinutes) {
         mutableFloatStateOf(state.prefs.screenTargetMinutes.toFloat())
@@ -606,8 +615,40 @@ fun SettingsScreen(
 
         // About Footer
         AccendInnerBox {
-            Text("ACCEND · LOCAL-FIRST DISCIPLINE ENGINE", style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
-            Text("v2.0.0 · Offline SQLite · Typography: Inter & JetBrains Mono (OFL)", style = MaterialTheme.typography.labelSmall, color = c.textMuted)
+            Text("ACCEND · CLOUD-SYNCHRONIZED DISCIPLINE ENGINE", style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
+            Text("v2.1.0 · Firebase · Typography: Inter & JetBrains Mono (OFL)", style = MaterialTheme.typography.labelSmall, color = c.textMuted)
+        }
+
+        // Danger Zone · Delete Account
+        AccendCard(borderColor = c.dangerBorder, backgroundColor = c.dangerBg.copy(alpha = 0.35f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Delete, null, tint = c.danger, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("DANGER ZONE · DELETE ACCOUNT", style = MaterialTheme.typography.titleMedium, color = c.danger)
+                    Text(
+                        "Permanently erase your profile, every log and your leaderboard entry.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.textMuted
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { showDeleteAccountDialog = true },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = c.danger,
+                    contentColor = AccendPalette.AccentWhite
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("DELETE ACCOUNT", style = MaterialTheme.typography.labelMedium)
+            }
+            deleteAccountError?.let { error ->
+                Spacer(Modifier.height(8.dp))
+                Text(error, style = MaterialTheme.typography.labelSmall, color = c.danger)
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -622,6 +663,32 @@ fun SettingsScreen(
             onSave = { name, uri, remove ->
                 onUpdateProfile(name, uri, remove)
                 showEditProfileDialog = false
+            }
+        )
+    }
+
+    // Delete Account Confirmation
+    if (showDeleteAccountDialog) {
+        ConfirmActionDialog(
+            title = "DELETE ACCOUNT",
+            body = "WARNING: This will permanently delete your account, all logs, and remove you from the leaderboard. This cannot be undone.",
+            confirmText = "DELETE ACCOUNT",
+            isDanger = true,
+            onDismiss = { showDeleteAccountDialog = false },
+            onConfirm = {
+                showDeleteAccountDialog = false
+                deleteAccountError = null
+                scope.launch {
+                    runCatching { GoogleSignInHelper.getIdToken(context) }
+                        .onSuccess { idToken ->
+                            onDeleteAccount(idToken) { error ->
+                                if (error != null) deleteAccountError = error
+                            }
+                        }
+                        .onFailure { throwable ->
+                            deleteAccountError = throwable.message ?: "Reauthentication failed."
+                        }
+                }
             }
         )
     }

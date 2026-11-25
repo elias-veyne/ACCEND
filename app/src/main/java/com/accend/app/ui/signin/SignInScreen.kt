@@ -36,17 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.credentials.CredentialManager
-import androidx.credentials.CredentialOption
-import androidx.credentials.CustomCredential
-import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.NoCredentialException
 import com.accend.app.R
 import com.accend.app.ui.theme.AccendPalette
 import com.accend.app.ui.theme.AccendThemeTokens
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
-import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
 @Composable
@@ -57,55 +49,18 @@ fun SignInScreen(
     val c = AccendThemeTokens.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember { CredentialManager.create(context) }
     var busy by remember { mutableStateOf(false) }
-
-    suspend fun idTokenFrom(option: CredentialOption): String {
-        val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
-        val result = credentialManager.getCredential(context, request)
-        val credential = result.credential
-        if (credential is CustomCredential &&
-            credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-        ) {
-            return GoogleIdTokenCredential.createFrom(credential.data).idToken
-        }
-        error("Unsupported Google credential.")
-    }
 
     fun startGoogleSignIn() {
         if (busy) return
         busy = true
         scope.launch {
-            // default_web_client_id is generated from the type-3 (Web) OAuth client in
-            // google-services.json — never use the Android client ID here.
-            val serverClientId = context.getString(R.string.default_web_client_id)
-
-            runCatching {
-                // Primary attempt: show every Google account on the device. Auto-select must stay
-                // off — on a fresh install it throws NoCredentialException instead of a picker.
-                val option = GetGoogleIdOption.Builder()
-                    .setFilterByAuthorizedAccounts(false)
-                    .setServerClientId(serverClientId)
-                    .setAutoSelectEnabled(false)
-                    .build()
-                idTokenFrom(option)
-            }.recoverCatching { throwable ->
-                if (throwable !is NoCredentialException) throw throwable
-                // Fallback: force the explicit Google account picker so the user can always sign in.
-                val pickerOption = GetSignInWithGoogleOption.Builder(serverClientId).build()
-                idTokenFrom(pickerOption)
-            }.onSuccess { idToken ->
-                onSignIn(idToken)
-            }.onFailure { throwable ->
-                busy = false
-                onMessage(
-                    if (throwable is NoCredentialException) {
-                        "No Google account available on this device. Add one in Settings and retry."
-                    } else {
-                        throwable.message ?: "Google sign-in failed."
-                    }
-                )
-            }
+            runCatching { GoogleSignInHelper.getIdToken(context) }
+                .onSuccess { idToken -> onSignIn(idToken) }
+                .onFailure { throwable ->
+                    busy = false
+                    onMessage(throwable.message ?: "Google sign-in failed.")
+                }
         }
     }
 

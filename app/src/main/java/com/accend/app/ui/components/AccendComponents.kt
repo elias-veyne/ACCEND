@@ -565,8 +565,10 @@ fun PfpAvatar(
     size: Dp = 44.dp,
     modifier: Modifier = Modifier
 ) {
+    val isRemote = pfpUri?.startsWith("http://") == true || pfpUri?.startsWith("https://") == true
     val fileExists = remember(pfpUri) {
         if (pfpUri.isNullOrBlank()) false
+        else if (pfpUri.startsWith("http://") || pfpUri.startsWith("https://")) true
         else {
             val path = Uri.parse(pfpUri).path
             path != null && File(path).exists()
@@ -587,7 +589,7 @@ fun PfpAvatar(
     ) {
         if (fileExists && pfpUri != null) {
             AsyncImage(
-                model = pfpUri,
+                model = if (isRemote) pfpUri else Uri.parse(pfpUri),
                 contentDescription = "Operator avatar",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop

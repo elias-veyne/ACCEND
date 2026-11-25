@@ -1,5 +1,6 @@
 package com.accend.app.data.cloud
 
+import android.net.Uri
 import com.accend.app.data.db.AccendDatabase
 import com.accend.app.data.db.DeepWorkLogEntity
 import com.accend.app.data.db.ExerciseLogEntity
@@ -16,6 +17,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -39,11 +41,19 @@ data class LeaderboardEntry(
     val rank: Int = 0
 )
 
+/** Profile stored in Firestore — the authoritative identity, independent of Firebase Auth. */
+data class RemoteProfile(
+    val name: String,
+    val photoUrl: String?,
+    val joinedDate: String?,
+    val exists: Boolean
+)
+
 /**
  * Single gateway to Firebase Auth, Firestore and FCM.
  *
  * Firestore layout:
- *   users/{uid}                     -> displayName, photoUrl, exp, fcmToken, joinedDate
+ *   users/{uid}                     -> name, displayName, photoUrl, exp, fcmToken, joinedDate
  *   users/{uid}/logs/{yyyy-MM-dd}   -> exercise / nutrition / mind / money snapshots
  */
 class CloudRepository(private val db: AccendDatabase) {
@@ -66,11 +76,34 @@ class CloudRepository(private val db: AccendDatabase) {
         awaitClose { auth.removeAuthStateListener(listener) }
     }
 
-    suspend fun signInWithGoogle(idToken: String) {
+    /** Returns the stored Firestore profile for returning users, or null for brand-new users. */
+    suspend fun signInWithGoogle(idToken: String): RemoteProfile? {
         val credential = GoogleAuthProvider.getCredential(idToken, null)
         auth.signInWithCredential(credential).await()
+        val user = auth.currentUser ?: return null
+        val snapshot = runCatching { users.document(user.uid).get().await() }.getOrNull()
+        val existed = snapshot?.exists() == true
         ensureUserDocument()
         fullSync()
+        return if (existed && snapshot != null) profileFrom(snapshot.data, user.displayName) else null
+    }
+
+    suspend fun fetchRemoteProfile(): RemoteProfile? {
+        val user = auth.currentUser ?: return null
+        val snapshot = runCatching { users.document(user.uid).get().await() }.getOrNull()
+            ?: return null
+        if (!snapshot.exists()) return null
+        return profileFrom(snapshot.data, user.displayName)
+    }
+
+    private fun profileFrom(raw: Map<String, Any>?, authName: String?): RemoteProfile {
+        fun field(key: String): String? = (raw?.get(key) as? String)?.takeIf { it.isNotBlank() }
+        return RemoteProfile(
+            name = field("name") ?: field("displayName") ?: authName ?: "Operator",
+            photoUrl = field("photoUrl"),
+            joinedDate = field("joinedDate"),
+            exists = true
+        )
     }
 
     suspend fun signOut() {
@@ -85,9 +118,13 @@ class CloudRepository(private val db: AccendDatabase) {
         val snapshot = runCatching { ref.get().await() }.getOrNull()
 
         if (snapshot == null || !snapshot.exists()) {
+            // Brand-new user: seed from Auth once. Afterwards Firestore is authoritative —
+            // never overwrite a custom in-app name/photo with the Auth profile on re-login.
+            val authName = user.displayName?.takeIf { it.isNotBlank() } ?: "Operator"
             val data = HashMap<String, Any>()
             data["uid"] = user.uid
-            data["displayName"] = user.displayName?.takeIf { it.isNotBlank() } ?: "Operator"
+            data["name"] = authName
+            data["displayName"] = authName
             data["photoUrl"] = user.photoUrl?.toString() ?: ""
             data["exp"] = LevelCalculator.INITIAL_EXP
             data["fcmToken"] = token ?: ""
@@ -96,8 +133,6 @@ class CloudRepository(private val db: AccendDatabase) {
             ref.set(data).await()
         } else {
             val update = HashMap<String, Any>()
-            user.displayName?.takeIf { it.isNotBlank() }?.let { update["displayName"] = it }
-            user.photoUrl?.let { update["photoUrl"] = it.toString() }
             if (!token.isNullOrBlank()) update["fcmToken"] = token
             update["updatedAt"] = FieldValue.serverTimestamp()
             runCatching { ref.update(update).await() }
@@ -109,6 +144,47 @@ class CloudRepository(private val db: AccendDatabase) {
         runCatching {
             users.document(uid).update("fcmToken", token).await()
         }
+    }
+
+    /** Publishes the in-app profile so the leaderboard uses it instead of the Auth profile. */
+    suspend fun updateProfile(name: String, newPhotoUri: Uri?, removePhoto: Boolean) {
+        val uid = currentUid ?: return
+        val cleanName = name.trim().ifBlank { "Operator" }
+        val update = HashMap<String, Any>()
+        update["name"] = cleanName
+        update["displayName"] = cleanName
+        if (removePhoto) {
+            update["photoUrl"] = ""
+        } else if (newPhotoUri != null) {
+            val imageRef = FirebaseStorage.getInstance().reference.child("profile_images/$uid.jpg")
+            runCatching {
+                imageRef.putFile(newPhotoUri).await()
+                update["photoUrl"] = imageRef.downloadUrl.await().toString()
+            }
+        }
+        update["updatedAt"] = FieldValue.serverTimestamp()
+        runCatching { users.document(uid).update(update).await() }
+    }
+
+    /** Removes the account, all log subcollections, its stored avatar and the Auth user. */
+    suspend fun deleteAccount(idToken: String?) {
+        val user = auth.currentUser ?: return
+        if (!idToken.isNullOrBlank()) {
+            user.reauthenticate(GoogleAuthProvider.getCredential(idToken, null)).await()
+        }
+        val uid = user.uid
+        while (true) {
+            val docs = users.document(uid).collection("logs").limit(400).get().await().documents
+            if (docs.isEmpty()) break
+            val batch = firestore.batch()
+            docs.forEach { batch.delete(it.reference) }
+            batch.commit().await()
+        }
+        users.document(uid).delete().await()
+        runCatching {
+            FirebaseStorage.getInstance().reference.child("profile_images/$uid.jpg").delete().await()
+        }
+        user.delete().await()
     }
 
     suspend fun awardExp(amount: Int) {
@@ -146,7 +222,9 @@ class CloudRepository(private val db: AccendDatabase) {
                 val entries = snapshot?.documents.orEmpty().mapIndexed { index, doc ->
                     LeaderboardEntry(
                         uid = doc.id,
-                        name = doc.getString("displayName")?.takeIf { it.isNotBlank() } ?: "OPERATOR",
+                        name = doc.getString("name")?.takeIf { it.isNotBlank() }
+                            ?: doc.getString("displayName")?.takeIf { it.isNotBlank() }
+                            ?: "OPERATOR",
                         photoUrl = doc.getString("photoUrl")?.takeIf { it.isNotBlank() },
                         exp = (doc.get("exp") as? Number)?.toLong() ?: 0L,
                         rank = index + 1
@@ -249,6 +327,18 @@ class CloudRepository(private val db: AccendDatabase) {
         money["skills"] = skills
         data["money"] = money
         data["updatedAt"] = FieldValue.serverTimestamp()
+
+        // Never overwrite a remote day with an empty local snapshot (fresh reinstall).
+        val mindMap = mind as Map<*, *>
+        val moneyMap = money as Map<*, *>
+        val hasLocalData = exercises.isNotEmpty() || nutrition.isNotEmpty() ||
+            (mindMap["meditations"] as? List<*>)?.isNotEmpty() == true ||
+            (mindMap["deepWork"] as? List<*>)?.isNotEmpty() == true ||
+            mindMap["screenTime"] != null || mindMap["reading"] != null ||
+            (moneyMap["transactions"] as? List<*>)?.isNotEmpty() == true ||
+            (moneyMap["savings"] as? List<*>)?.isNotEmpty() == true ||
+            (moneyMap["skills"] as? List<*>)?.isNotEmpty() == true
+        if (!hasLocalData) return
 
         logDoc(uid, date).set(data).await()
     }

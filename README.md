@@ -31,10 +31,17 @@ through Firebase, so a reinstall never costs you your history.
 
 ## Features
 
-- **Google Sign-In** via Android Credential Manager + Firebase Auth.
+- **Google Sign-In** via Android Credential Manager + Firebase Auth. On re-login the app restores
+  your custom name and profile picture from `users/{uid}` in Firestore and skips Onboarding —
+  Auth profile details never overwrite your in-app identity.
 - **Cloud sync** — every Exercise / Nutrition / Mind / Money log is written locally with Room
   and pushed to `users/{uid}/logs/{yyyy-MM-dd}` in Firestore. On login the last 30 days are
-  pulled back down and merged with local data.
+  pulled back down and merged with local data. Empty local snapshots never overwrite remote logs.
+- **Profile photos** are uploaded to Firebase Storage so the leaderboard shows your in-app avatar
+  on every device.
+- **Delete Account** (Settings → Danger Zone) removes the Firestore user document and all log
+  subcollections, the stored avatar, the Firebase Auth account and all local Room/DataStore data
+  after a re-authentication confirmation.
 - **EXP & levels** — completing protocols grants EXP (500 EXP per level). The Home screen shows
   your level, total EXP and progress to the next level.
 - **Global leaderboard** — live Firestore query, top 50 operators by EXP, with profile pictures
@@ -73,7 +80,7 @@ users to read/write their own `users/{uid}` document and `users/{uid}/logs/**` s
 
 The latest Android APK is published on the **[Releases](../../releases)** tab:
 
-1. Open **[Releases](../../releases)** and select the newest version (for example `v1.1.3`).
+1. Open **[Releases](../../releases)** and select the newest version (for example `v1.1.4`).
 2. Under **Assets**, download `ACCEND-v<version>.apk`.
 3. Transfer it to your Android device and open the file.
 4. When prompted, allow installation from this source (Android blocks unknown sources by
@@ -98,7 +105,7 @@ The APK is written to `app/build/outputs/apk/release/`.
 
 ```
 app/src/main/java/com/accend/app/
-  data/cloud/      Firebase Auth, Firestore sync, leaderboard, FCM token
+  data/cloud/      Firebase Auth, Firestore sync, leaderboard, FCM token, account deletion
   data/db/         Room database, entities and DAOs
   data/repo/       Local repositories (push to Firestore after every write)
   domain/          Scores, streaks, progression calculations

@@ -181,6 +181,19 @@ fun AccendNavHost(
                                     return@launch
                                 }
                                 viewModel.syncCloudOnce()
+                                if (!snap.onboarded) {
+                                    // Returning user with wiped local data: restore identity from
+                                    // Firestore and skip onboarding instead of overwriting it.
+                                    val restored = withContext(Dispatchers.IO) {
+                                        viewModel.restoreIdentityIfSignedIn()
+                                    }
+                                    if (restored) {
+                                        navController.navigate(Routes.HOME) {
+                                            popUpTo(Routes.SPLASH) { inclusive = true }
+                                        }
+                                        return@launch
+                                    }
+                                }
                                 if (snap.onboarded) {
                                     withContext(Dispatchers.IO) {
                                         viewModel.container.seedRepo.seedIfEmpty()
@@ -208,12 +221,14 @@ fun AccendNavHost(
                         onSignIn = { idToken ->
                             viewModel.signIn(
                                 idToken = idToken,
-                                onSuccess = {
+                                onSuccess = { restoredIdentity ->
                                     scope.launch {
                                         val snap = withContext(Dispatchers.IO) {
                                             viewModel.container.prefsRepo.getSnapshot()
                                         }
-                                        val dest = if (snap.onboarded) Routes.HOME else Routes.ONBOARDING
+                                        val dest = if (restoredIdentity || snap.onboarded) {
+                                            Routes.HOME
+                                        } else Routes.ONBOARDING
                                         navController.navigate(dest) {
                                             popUpTo(Routes.SIGN_IN) { inclusive = true }
                                         }
@@ -353,6 +368,20 @@ fun AccendNavHost(
                         onSaveProtocolConfirmed = {
                             viewModel.syncSchedulesNow()
                             showMessage("Discipline protocol saved & schedules synced.")
+                        },
+                        onDeleteAccount = { idToken, onDone ->
+                            viewModel.deleteAccount(idToken) { error ->
+                                if (error == null) {
+                                    navController.navigate(Routes.SIGN_IN) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            inclusive = true
+                                        }
+                                        launchSingleTop = true
+                                    }
+                                } else {
+                                    showMessage(error)
+                                }
+                            }
                         }
                     )
                 }

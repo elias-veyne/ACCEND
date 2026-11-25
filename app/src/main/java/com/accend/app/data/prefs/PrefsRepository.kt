@@ -90,6 +90,10 @@ class PrefsRepository(private val context: Context) {
         context.accendDataStore.edit { it[Keys.ONBOARDED] = value }
     }
 
+    suspend fun clearAll() {
+        context.accendDataStore.edit { it.clear() }
+    }
+
     suspend fun updateTargets(
         screenTargetMinutes: Int? = null,
         readingTarget: Int? = null,
