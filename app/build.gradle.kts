@@ -36,6 +36,8 @@ android {
         // rejected by OEM/sideload package installers as "package appears to be invalid".
         isV1SigningEnabled = true
         isV2SigningEnabled = true
+        enableV1Signing = true
+        enableV2Signing = true
       }
     }
   }

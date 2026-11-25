@@ -86,10 +86,11 @@ jobs:
         run: |
           SDK_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           echo "Verifying $APK"
-          "$SDK_TOOLS/apksigner" verify --verbose --min-sdk-version 24 "$APK" > apksigner.log 2>&1
+          # min-sdk 23 forces apksigner to validate the v1 (JAR) signature too.
+          "$SDK_TOOLS/apksigner" verify --verbose --min-sdk-version 23 "$APK" > apksigner.log 2>&1
           cat apksigner.log
-          grep -q "Verified using v1 scheme" apksigner.log
-          grep -q "Verified using v2 scheme" apksigner.log
+          grep -q "Verified using v1 scheme (JAR signing): true" apksigner.log
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apksigner.log
           PACKAGE=$("$SDK_TOOLS/aapt" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
           echo "Package: $PACKAGE"
           if [ "$PACKAGE" != "com.accend.app" ]; then
